@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS = {
   tabs: {
     enabled: true,
     remote: true,
+    read_screen: true,
     rename_window: "10m",
     namers: ["claude", "opencode", "agy"],
     claude_model: "haiku",

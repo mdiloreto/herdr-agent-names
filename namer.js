@@ -53,11 +53,11 @@ export function cleanReply(raw) {
 
 // Pane text is untrusted. "@" becomes a fullwidth lookalike because CLI agents
 // can treat "@path" in a prompt as a file attachment.
-function flat(v) {
-  return String(v).replace(/\s+/g, " ").trim().slice(0, FIELD_MAX).replaceAll("@", "＠");
+function flat(v, max = FIELD_MAX) {
+  return String(v).replace(/\s+/g, " ").trim().slice(0, max).replaceAll("@", "＠");
 }
 
-// info: { space, typed, panes: [{ program, shell, status, session, step, folder, folderName, branch, title }] }
+// info: { space, typed, panes: [{ program, shell, status, session, step, folder, folderName, branch, title, screen }] }
 export function buildPrompt(info) {
   const lines = [`Space: ${flat(info.space)}`];
   if (info.typed) lines.push(`Typed name: ${flat(info.typed)}`);
@@ -69,6 +69,10 @@ export function buildPrompt(info) {
     if (p.step) parts.push(`step "${flat(p.step)}"`);
     if (p.folder) parts.push(`folder ${flat(p.folder)}`);
     if (p.branch) parts.push(`branch ${flat(p.branch)}`);
+    if (p.screen) {
+      const excerpt = flat(p.screen, 480);
+      if (excerpt) parts.push(`screen "${excerpt}"`);
+    }
     lines.push(`Pane ${i + 1}: ${parts.join(", ")}`);
   });
   return lines.join("\n");
@@ -166,8 +170,9 @@ export function createNamer(env) {
   const dir = () => `${env.modDir()}/namer`;
   const config = () => env.config?.() ?? {};
 
-  async function run(command, args, timeout, parse, after) {
-    const r = await env.exec(command, args, { cwd: dir(), timeout });
+  async function run(command, args, timeout, parse, after, on) {
+    const opts = on ? { on, timeout } : { cwd: dir(), timeout };
+    const r = await env.exec(command, args, opts);
     await after?.(r);
     if (r.code !== 0) throw new Error(`exit ${r.code}`);
     const name = parse(r.stdout);
@@ -260,7 +265,7 @@ export function createNamer(env) {
     throw new Error("no opencode model answered");
   }
 
-  async function claude(prompt) {
+  async function claude(prompt, on) {
     rules ??= stripFrontmatter((await env.readTextFile(`${dir()}/.agents/agents/tab-namer.md`)) ?? "");
     if (!rules) throw new Error("no rules");
     return run(
@@ -268,6 +273,8 @@ export function createNamer(env) {
       [
         "-p", "--safe-mode", "--tools", "", "--strict-mcp-config",
         "--no-chrome", "--no-session-persistence",
+        "--setting-sources", "",
+        "--settings", '{"disableAllHooks":true}',
         "--model", config().claude_model || "haiku",
         "--output-format", "json",
         "--system-prompt", rules,
@@ -275,12 +282,14 @@ export function createNamer(env) {
       ],
       45000,
       parseClaude,
+      null,
+      on,
     );
   }
 
   const providers = { agy, opencode, claude };
 
-  return async function inferName(prompt, fallback) {
+  return async function inferName(prompt, fallback, { on } = {}) {
     const order = config().namers ?? ["claude", "opencode", "agy"];
     for (const by of order) {
       const namer = providers[by];
@@ -289,6 +298,16 @@ export function createNamer(env) {
         return { name: await namer(prompt), by };
       } catch (e) {
         if (!(e instanceof NoName) && by !== "opencode") cool(by);
+      }
+    }
+    if (on && order.length) {
+      const remoteKey = `${on}:claude`;
+      if (!cooling(remoteKey)) {
+        try {
+          return { name: await claude(prompt, on), by: remoteKey };
+        } catch (e) {
+          if (!(e instanceof NoName)) cool(remoteKey);
+        }
       }
     }
     return { name: fallback, by: "rule" };

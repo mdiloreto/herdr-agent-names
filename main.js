@@ -6,7 +6,7 @@ import {
   panes, spaces, terminals, shared, setShared, run, home, appHome, exec, hc, focused,
   readTextFile, writeTextFile, checking,
 } from "herdr";
-import { machineOf, shortFolder, folderName, sessionName, cleanPaneTitle, same } from "./helpers.js";
+import { machineOf, shortFolder, folderName, sessionName, cleanPaneTitle, extractScreenExcerpt, same } from "./helpers.js";
 import { cloneDefaults, loadModSettings, parseDuration } from "./settings.js";
 import { buildPrompt, createNamer, ruleName, typedName } from "./namer.js";
 import { DEFAULT_CLEANUP_EVERY_MS, DEFAULT_STALE_MS, isQuiet, runCleanup, STALE_KEY, STALE_SUFFIX } from "./cleanup.js";
@@ -201,14 +201,41 @@ export default class AgentNames extends View {
           if (tab.name !== info.typed && this.pending.get(tab.id) !== info.typed) this.rename(tab.id, info.typed);
           continue;
         }
+        const screenPanes = [];
+        if (this.settings.tabs.read_screen) {
+          info.panes.forEach((p, index) => {
+            if (screenPanes.length >= 2) return;
+            if (!p.shell && !p.session && !p.title && !p.step) {
+              const terminal = mine[index].terminal;
+              const turn = tmap.get(terminal)?.turn ?? 0;
+              screenPanes.push({ index, terminal, turn });
+            }
+          });
+        }
         const prompt = buildPrompt(info);
+        const turnKey = screenPanes
+          .map((sp) => `${sp.terminal}:${sp.turn > 0 ? Math.min(sp.turn, 5) : 0}`)
+          .join(",");
+        const fp = turnKey ? `${prompt}\n#screen:${turnKey}` : prompt;
         const last = nextNamed[tab.id];
-        if (last && (prompt === last.fp || now - last.at < renameWindowMs)) {
+        const genericUpgrade =
+          screenPanes.length > 0 &&
+          mine.some((p) => p.program?.name && p.program.name === tab.name);
+        if (last && (fp === last.fp || (!genericUpgrade && now - last.at < renameWindowMs))) {
           this.queue.delete(tab.id);
           continue;
         }
-        if (this.queue.get(tab.id)?.fp === prompt) continue;
-        this.queue.set(tab.id, { prompt, fp: prompt, fallback: ruleName(info), gen: this.gen.get(tab.id) ?? 0 });
+        if (this.queue.get(tab.id)?.fp === fp) continue;
+        const machine = space.machine ?? machineOf(mine[0]?.terminal) ?? null;
+        this.queue.set(tab.id, {
+          prompt,
+          fp,
+          info,
+          screenPanes,
+          machine,
+          fallback: ruleName(info),
+          gen: this.gen.get(tab.id) ?? 0,
+        });
       }
     }
     for (const map of [this.queue, this.seen, this.gen, this.pending]) {
@@ -229,7 +256,25 @@ export default class AgentNames extends View {
           const [id, job] = this.queue.entries().next().value;
           this.queue.delete(id);
           setShared(NAMED_TABS, { ...(shared(NAMED_TABS) ?? {}), [id]: { fp: job.fp, at: Date.now() } });
-          const { name, by } = await this.inferName(job.prompt, job.fallback);
+          let prompt = job.prompt;
+          if (job.screenPanes?.length && this.settings.tabs.read_screen) {
+            const panesCopy = job.info.panes.map((p) => ({ ...p }));
+            let enriched = false;
+            for (const sp of job.screenPanes) {
+              const read = await hc(["read", sp.terminal, "--json", "--lines", "40"]).catch(() => null);
+              await cx.sleep(0);
+              const excerpt = extractScreenExcerpt(read);
+              if (excerpt && panesCopy[sp.index]) {
+                panesCopy[sp.index].screen = excerpt;
+                enriched = true;
+              }
+            }
+            if (enriched) {
+              prompt = buildPrompt({ ...job.info, panes: panesCopy });
+            }
+          }
+          if ((this.gen.get(id) ?? 0) !== job.gen) continue;
+          const { name, by } = await this.inferName(prompt, job.fallback, { on: job.machine });
           await cx.sleep(0);
           this.apply(id, job, name, by);
         }

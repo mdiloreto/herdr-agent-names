@@ -1,0 +1,25 @@
+{
+  "place": "none",
+  "title": "Agent names",
+  "settings": {
+    "pane_heads": {
+      "enabled": true
+    },
+    "tabs": {
+      "enabled": true,
+      "remote": true,
+      "rename_window": "10m",
+      "namers": ["claude", "opencode", "agy"],
+      "claude_model": "haiku",
+      "agy_model": "gemini-3.8-flash-low",
+      "opencode_models": [],
+      "opencode_free_models_file": ""
+    },
+    "cleanup": {
+      "enabled": false,
+      "stale_after": "24h",
+      "check_every": "5m",
+      "log_path": ".local/state/herdr-tab-cleanup.log"
+    }
+  }
+}

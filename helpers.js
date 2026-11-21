@@ -26,13 +26,26 @@ export function folderName(cwd, userHome) {
 }
 
 // What the agent called its session: herdr-core labels in priority order
-// (`agent.title`, `session.title`, `claude.title`, and `pi.session` for pi),
-// else a terminal OSC title that says more than the terminal's own address,
-// program name/key, raw CLI invocation, path, or user@host.
+// (`agent.title`, `session.title`, `agy.title` for Antigravity, `claude.title`,
+// and `pi.session` for pi/oh-my-pi), else a terminal OSC title that says more
+// than the terminal's own address, program name/key, raw CLI invocation, path,
+// or user@host.
 const AGENT_CLIS = new Set([
   "agy", "antigravity", "claude", "codex", "pi", "omp", "oh-my-pi",
   "gemini", "opencode", "copilot", "crush", "amp", "kimi", "kiro", "kiro-cli",
 ]);
+
+function isAgyProgram(program) {
+  const key = program?.key?.toLowerCase();
+  const name = program?.name?.toLowerCase();
+  return key === "antigravity" || key === "agy" || name === "antigravity";
+}
+
+function isPiProgram(program) {
+  const key = program?.key?.toLowerCase();
+  const name = program?.name?.toLowerCase();
+  return key === "pi" || key === "oh-my-pi" || name === "pi" || name === "oh-my-pi";
+}
 
 export function isCliInvocation(title, program) {
   if (typeof title !== "string") return false;
@@ -51,15 +64,16 @@ export function isCliInvocation(title, program) {
 }
 
 export function sessionName(p, labels) {
-  const termLabels = labels.get(p.terminal);
+  if (!p.program?.agent) return null;
+  const termLabels = labels?.get(p.terminal);
   const label = [
     termLabels?.["agent.title"],
     termLabels?.["session.title"],
+    isAgyProgram(p.program) ? termLabels?.["agy.title"] : null,
     termLabels?.["claude.title"],
-    p.program?.key === "pi" ? termLabels?.["pi.session"] : null,
-  ].find((v) => typeof v === "string" && v.trim());
+    isPiProgram(p.program) ? termLabels?.["pi.session"] : null,
+  ].find((v) => typeof v === "string" && v.trim() && !isCliInvocation(v, p.program));
   if (label) return label.trim();
-  if (!p.program?.agent) return null;
   const raw = (p.title ?? "").trim();
   const bare = bareId(p.terminal);
   if (!raw || raw === p.terminal || (bare && raw === bare)) return null;
@@ -75,6 +89,13 @@ export function sessionName(p, labels) {
     isCliInvocation(title, p.program)
   ) return null;
   return title;
+}
+
+export function sessionCwd(p, labels) {
+  if (!p.program?.agent) return p.cwd;
+  const termLabels = labels?.get(p.terminal);
+  if (isAgyProgram(p.program)) return termLabels?.["agy.cwd"]?.trim() || p.cwd;
+  return termLabels?.["claude.cwd"]?.trim() || p.cwd;
 }
 
 export function cleanPaneTitle(p, session) {

@@ -1,0 +1,11 @@
+{
+  "name": "herdr-agy-titles",
+  "displayName": "Herdr AGY Titles",
+  "version": "1.0.0",
+  "description": "Publish Antigravity CLI session titles to Herdr App (herdr-core labels) and Herdr TUI (pane metadata) using AGY's native conversation annotations.",
+  "author": {
+    "name": "mdiloreto",
+    "url": "https://github.com/mdiloreto"
+  },
+  "repository": "https://github.com/mdiloreto/herdr-agent-names"
+}

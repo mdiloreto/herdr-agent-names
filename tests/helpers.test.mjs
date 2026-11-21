@@ -7,6 +7,7 @@ import {
   folderName,
   isCliInvocation,
   sessionName,
+  sessionCwd,
   cleanPaneTitle,
   extractScreenExcerpt,
 } from "../helpers.js";
@@ -109,19 +110,84 @@ test("settings parsing validates durations, merges overrides and reports problem
   assert.equal(defaults.settings.tabs.read_screen, true);
 });
 
-test("sessionName checks herdr-core labels in priority order: agent.title > session.title > claude.title > pi.session", () => {
+test("sessionName checks herdr-core labels in priority order: agent.title > session.title > agy.title > claude.title > pi.session", () => {
   const labels = new Map([
-    ["t1", { "agent.title": "From agent", "session.title": "From session", "claude.title": "From claude", "pi.session": "From pi" }],
-    ["t2", { "agent.title": "   ", "session.title": "From session", "claude.title": "From claude" }],
+    ["t1", { "agent.title": "From agent", "session.title": "From session", "agy.title": "From agy", "claude.title": "From claude", "pi.session": "From pi" }],
+    ["t2", { "agent.title": "   ", "session.title": "From session", "agy.title": "From agy", "claude.title": "From claude" }],
     ["t3", { "claude.title": "From claude", "pi.session": "From pi" }],
     ["t4", { "pi.session": "From pi" }],
+    ["t5", { "agy.title": "From agy", "claude.title": "Stale claude title" }],
+    ["t6", { "agy.title": "Only agy title" }],
+    ["t7", { "agent.title": "agy --dangerously-skip-permissions", "agy.title": "Real AGY task" }],
+    ["t8", { "agy.title": "claude --resume 123" }],
   ]);
 
   assert.equal(sessionName({ terminal: "t1", program: { agent: true, key: "pi", name: "Pi" } }, labels), "From agent");
+  assert.equal(sessionName({ terminal: "t1", program: { agent: true, key: "antigravity", name: "Antigravity" } }, labels), "From agent");
   assert.equal(sessionName({ terminal: "t2", program: { agent: true, key: "claude", name: "Claude Code" } }, labels), "From session");
   assert.equal(sessionName({ terminal: "t3", program: { agent: true, key: "pi", name: "Pi" } }, labels), "From claude");
   assert.equal(sessionName({ terminal: "t4", program: { agent: true, key: "pi", name: "Pi" } }, labels), "From pi");
+  assert.equal(sessionName({ terminal: "t4", program: { agent: true, key: "oh-my-pi", name: "oh-my-pi" } }, labels), "From pi");
   assert.equal(sessionName({ terminal: "t4", program: { agent: true, key: "codex", name: "Codex" } }, labels), null);
+
+  // agy.title is picked up for Antigravity/AGY panes and beats stale claude.title
+  assert.equal(sessionName({ terminal: "t5", program: { agent: true, key: "antigravity", name: "Antigravity" } }, labels), "From agy");
+  assert.equal(sessionName({ terminal: "t5", program: { agent: true, key: "agy", name: "AGY" } }, labels), "From agy");
+  assert.equal(sessionName({ terminal: "t5", program: { agent: true, key: "custom", name: "Antigravity" } }, labels), "From agy");
+
+  // agy.title is ignored for non-AGY agents
+  assert.equal(sessionName({ terminal: "t5", program: { agent: true, key: "claude", name: "Claude Code" } }, labels), "Stale claude title");
+  assert.equal(sessionName({ terminal: "t6", program: { agent: true, key: "claude", name: "Claude Code" } }, labels), null);
+  assert.equal(sessionName({ terminal: "t6", program: { agent: true, key: "opencode", name: "OpenCode" } }, labels), null);
+  assert.equal(sessionName({ terminal: "t6", program: { agent: true, key: "codex", name: "Codex" } }, labels), null);
+  assert.equal(sessionName({ terminal: "t6", program: { agent: true, key: "pi", name: "Pi" } }, labels), null);
+
+  // Label values matching isCliInvocation are rejected
+  assert.equal(sessionName({ terminal: "t7", program: { agent: true, key: "antigravity", name: "Antigravity" } }, labels), "Real AGY task");
+  assert.equal(sessionName({ terminal: "t8", program: { agent: true, key: "antigravity", name: "Antigravity" } }, labels), null);
+});
+
+test("sessionName ignores all herdr-core labels when pane is not an agent (e.g. shell after exiting AGY)", () => {
+  const labels = new Map([
+    ["t1", { "agent.title": "Stale agent", "session.title": "Stale session", "agy.title": "Stale agy", "claude.title": "Stale claude", "pi.session": "Stale pi" }],
+  ]);
+
+  assert.equal(sessionName({ terminal: "t1", title: "zsh", program: { agent: false, shell: true, key: "zsh", name: "zsh" } }, labels), null);
+  assert.equal(sessionName({ terminal: "t1", title: "vim main.js", program: { shell: false, key: "vim", name: "vim" } }, labels), null);
+  assert.equal(sessionName({ terminal: "t1", title: "t1" }, labels), null);
+});
+
+test("sessionCwd prefers agy.cwd for AGY, claude.cwd for other agents, and p.cwd for shells", () => {
+  const labels = new Map([
+    ["t1", { "agy.cwd": "/work/agy-repo", "claude.cwd": "/work/claude-repo" }],
+    ["t2", { "agy.cwd": "   ", "claude.cwd": "/work/claude-repo" }],
+    ["t3", { "claude.cwd": "  " }],
+  ]);
+
+  assert.equal(
+    sessionCwd({ terminal: "t1", cwd: "/work/shell", program: { agent: true, key: "antigravity", name: "Antigravity" } }, labels),
+    "/work/agy-repo",
+  );
+  assert.equal(
+    sessionCwd({ terminal: "t1", cwd: "/work/shell", program: { agent: true, key: "agy", name: "AGY" } }, labels),
+    "/work/agy-repo",
+  );
+  assert.equal(
+    sessionCwd({ terminal: "t2", cwd: "/work/shell", program: { agent: true, key: "antigravity", name: "Antigravity" } }, labels),
+    "/work/shell",
+  );
+  assert.equal(
+    sessionCwd({ terminal: "t1", cwd: "/work/shell", program: { agent: true, key: "claude", name: "Claude Code" } }, labels),
+    "/work/claude-repo",
+  );
+  assert.equal(
+    sessionCwd({ terminal: "t3", cwd: "/work/shell", program: { agent: true, key: "claude", name: "Claude Code" } }, labels),
+    "/work/shell",
+  );
+  assert.equal(
+    sessionCwd({ terminal: "t1", cwd: "/work/shell", program: { agent: false, shell: true, key: "zsh", name: "zsh" } }, labels),
+    "/work/shell",
+  );
 });
 
 test("isCliInvocation identifies raw agent CLI command lines while keeping real titles", () => {

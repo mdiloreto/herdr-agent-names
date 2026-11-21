@@ -6,7 +6,7 @@ import {
   panes, spaces, terminals, shared, setShared, run, home, appHome, exec, hc, focused,
   readTextFile, writeTextFile, checking,
 } from "herdr";
-import { machineOf, shortFolder, folderName, sessionName, cleanPaneTitle, extractScreenExcerpt, same } from "./helpers.js";
+import { machineOf, shortFolder, folderName, sessionName, sessionCwd, cleanPaneTitle, extractScreenExcerpt, same } from "./helpers.js";
 import { cloneDefaults, loadModSettings, parseDuration } from "./settings.js";
 import { buildPrompt, createNamer, ruleName, typedName } from "./namer.js";
 import { DEFAULT_CLEANUP_EVERY_MS, DEFAULT_STALE_MS, isQuiet, runCleanup, STALE_KEY, STALE_SUFFIX } from "./cleanup.js";
@@ -110,8 +110,9 @@ export default class AgentNames extends View {
       const name = sessionName(p, labels);
       if (!name || next[p.pane]) continue;
       const ctx = labels.get(p.terminal)?.["claude.ctx"];
+      const cwd = sessionCwd(p, labels);
       const userHome = this.homeFor(p.terminal, cx);
-      next[p.pane] = { by: BY, title: name, detail: [ctx, shortFolder(p.cwd, userHome)].filter(Boolean).join(" · ") };
+      next[p.pane] = { by: BY, title: name, detail: [ctx, shortFolder(cwd, userHome)].filter(Boolean).join(" · ") };
     }
     if (!same(heads, next)) setShared("pane-heads", next);
   }
@@ -128,7 +129,7 @@ export default class AgentNames extends View {
       typed: typed ?? null,
       panes: mine.map((p) => {
         const session = sessionName(p, labels);
-        const cwd = labels.get(p.terminal)?.["claude.cwd"] ?? p.cwd;
+        const cwd = sessionCwd(p, labels);
         const userHome = this.homeFor(p.terminal, cx);
         return {
           program: p.program?.name ?? "",

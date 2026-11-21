@@ -4,7 +4,8 @@ Automatic tab titles, pane headers, and optional stale-shell cleanup for [Herdr 
 
 ## Features
 
-- **Universal coding agent support (local & remote):** generates real task-based tab titles for all coding agents (Antigravity, oh-my-pi, Codex, Pi, Gemini, Copilot, Crush, Amp, Kimi, Kiro, Claude Code, OpenCode, etc.) using `herdr-core` session labels (`agent.title`, `session.title`, `claude.title`, `pi.session`), terminal OSC titles, step reports, git branches, folders, and optional sanitized screen excerpts (`tabs.read_screen`).
+- **Universal coding agent support (local & remote):** generates real task-based tab titles for all coding agents (Antigravity, oh-my-pi, Codex, Pi, Gemini, Copilot, Crush, Amp, Kimi, Kiro, Claude Code, OpenCode, etc.) using `herdr-core` session labels (`agent.title`, `session.title`, `agy.title`, `claude.title`, `pi.session`), terminal OSC titles, step reports, git branches, folders, and optional sanitized screen excerpts (`tabs.read_screen`).
+- **Native Antigravity CLI (`agy`) plugin bundled (`plugins/herdr-agy-titles`):** reads AGY's native `annotations/<conversationId>.pbtxt` titles with zero extra LLM calls and publishes them to both **Herdr App** (`agy.title`, `agy.session`, `agy.dir`, `agy.cwd` via `hc label`) and **Herdr TUI** (`herdr pane report-metadata`).
 - **Smart title filtering & screen fallback:** filters out `herdr-app`'s terminal-address fallback (`<host>/tXX` and bare `tXX` IDs) and raw zsh CLI invocations (e.g. `agy --dangerously-skip-permissions`, `claude --resume ...`, `codex --no-daemon`). When a non-shell agent exposes no label, title, or step report and `tabs.read_screen` is enabled, reads the recent terminal lines via `hc read`, strips ANSI/box-drawing/nerd-font/timestamp noise, and upgrades generic program-name tabs promptly.
 - **Safe remote machine support:** resolves each remote machine's `$HOME` to shorten `/home/<user>` to `~` and keeps remote terminals from turning tabs or pane headers into raw IP/terminal addresses.
 - **Configurable namer chain with remote `claude` & zero-LLM fallback:** tries any configured local tool-less CLI namer (`claude`, `opencode`, `agy`), cools down unavailable CLIs for 1 hour, falls back to running `claude` on the tab's remote machine (with isolated per-host cooldown tracking) when all local providers are unavailable, and falls back to deterministic rule-based naming (`session` / `program` / `folder`) when no LLM CLI answers or `"namers": []` is set.
@@ -89,14 +90,39 @@ Edit the `settings` block inside `~/.config/herdr-app/mods/herdr-agent-names/mod
 | `cleanup.check_every` | `"5m"` | Poll interval for empty-shell checks. |
 | `cleanup.log_path` | `".local/state/herdr-tab-cleanup.log"` | Relative (to `$HOME`) or absolute audit log written before closing any tab. |
 
+## Optional: Antigravity CLI (`agy`) Session Titles Plugin
+
+This repository bundles a native Antigravity CLI plugin at `plugins/herdr-agy-titles` that publishes AGY's own generated session titles with **zero extra LLM calls**:
+
+- **How it works:** hooks `SessionStart`, `PreInvocation`, `PostInvocation`, and `Stop`, reads AGY's native conversation annotation (`<app_data_dir>/annotations/<conversationId>.pbtxt`), and publishes the title to:
+  - **Herdr App** (`herdr-core`): sets `agy.title`, `agy.session`, `agy.dir`, and `agy.cwd` via `hc label` after verifying the terminal foreground belongs to Antigravity (cached per terminal to avoid redundant calls).
+  - **Herdr TUI** (`HERDR_ENV=1`): publishes `herdr pane report-metadata` (`--source user:pane-title --agent agy`) with `task` / `was` tokens and respects the pane's `agent_session` guard.
+- **Turn-1 async polling:** when `.pbtxt` has not been written yet on the first turn, the hook returns its JSON response immediately and detaches a background poller that publishes as soon as the title appears.
+- **Nested/headless safety:** automatically skips headless `agy -p`, `--print`, and `--agent tab-namer` invocations so internal helper runs never clobber an active pane's labels. Set `HERDR_AGY_TITLE_DISABLE=1` to temporarily disable.
+
+### Installing the AGY Plugin
+
+Install with the Antigravity CLI from a clone of this repo:
+
+```bash
+agy plugin install ./plugins/herdr-agy-titles
+```
+
+Or symlink/copy it directly into `~/.gemini/config/plugins/herdr-agy-titles`:
+
+```bash
+ln -s "$PWD/plugins/herdr-agy-titles" ~/.gemini/config/plugins/herdr-agy-titles
+```
+
 ## Optional: `herdr-core` session labels
 
-Any agent or hook can publish a session title directly to `herdr-core`; `herdr-agent-names` checks labels in priority order:
+Any agent or hook can publish a session title directly to `herdr-core`; `herdr-agent-names` reads labels only when the pane is running an agent (so exiting an agent back to a shell never shows stale session titles) and checks them in priority order:
 
 1. `agent.title` (generic agent label — works for any coding agent)
 2. `session.title` (generic session label)
-3. `claude.title` (Claude Code label)
-4. `pi.session` (Pi sessions)
+3. `agy.title` (Antigravity CLI sessions — paired with `agy.cwd` for folder display)
+4. `claude.title` (Claude Code label — paired with `claude.cwd` for folder display)
+5. `pi.session` (Pi / oh-my-pi sessions)
 
 For any coding agent or wrapper script:
 
@@ -125,10 +151,12 @@ And clear those labels in a Claude `SessionEnd` hook when a session ends intenti
 
 ## Development & Tests
 
-Requires Node.js 20+:
+Requires Node.js 20+ and Python 3.9+:
 
 ```bash
 node --test tests/*.test.mjs
+python3 -m unittest discover -s tests -p '*_test.py' -v
+agy plugin validate plugins/herdr-agy-titles --strict
 ```
 
 ## License

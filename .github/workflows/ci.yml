@@ -22,3 +22,7 @@ jobs:
           node --check cleanup.js
       - name: Unit tests
         run: node --test tests/*.test.mjs
+      - name: Python syntax check
+        run: python3 -m py_compile plugins/herdr-agy-titles/herdr-agy-title.py
+      - name: Python unit tests
+        run: python3 -m unittest discover -s tests -p '*_test.py' -v
